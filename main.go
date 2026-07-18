@@ -23,6 +23,8 @@ const (
 	ERROR_LIVETIMING_TOPIC_SUBSCRIPTION = "Error subscribing to topics on livetiming service"
 
 	ERROR_LIVETIMING_MESSAGE_READ           = "Error reading message from livetiming service socket"
+	ERROR_LIVETIMING_MESSAGE_WRITE          = "Error writing message to livetiming service socket"
+	ERROR_LIVETIMING_MESSAGE_BAD_SOCKET     = "Error tried interacting with a socket that is nil"
 	ERROR_LIVETIMING_MESSAGE_BUFFER_WRITE   = "Error writing read message into buffer from livetiming service socket"
 	ERROR_LIVETIMING_MESSAGE_INVALID_TYPE   = "Error reading message type, received invalid type"
 	ERROR_LIVETIMING_MESSAGE_INVALID_TARGET = "Error reading message type, received invalid type"
@@ -139,7 +141,6 @@ type LiveTimingNegotiatedTokens struct {
 
 type LiveTimingClient struct {
 	Targets          []string
-	Connected        bool
 	Stopped          bool
 	Ws               *websocket.Conn
 	NegotiatedTokens LiveTimingNegotiatedTokens
@@ -200,8 +201,8 @@ func (ltc *LiveTimingClient) handleMessage(message SignalRMessage) error {
 	switch message.Type {
 	case SIGNARLR_MSG_PING:
 		{
+			ltc.Write(1, fmt.Appendf(nil, `{"type": %v}`, SIGNARLR_MSG_PING))
 			fmt.Printf("%s: RESPONDED TO PING MESSAGE WITH '%v'\n", LIVETIMING_LOG_PREFIX, SIGNARLR_MSG_PING)
-			ltc.Ws.WriteMessage(1, fmt.Appendf(nil, `{"type": %v}`, SIGNARLR_MSG_PING))
 			return nil
 		}
 	case SIGNARLR_MSG_CLOSE:
@@ -249,6 +250,25 @@ func (ltc *LiveTimingClient) handleMessage(message SignalRMessage) error {
 	}
 }
 
+func (ltc *LiveTimingClient) Close() {
+	if ltc != nil {
+		ltc.Ws.Close()
+		ltc.Ws = nil
+	}
+}
+
+func (ltc *LiveTimingClient) Write(messageType int, b []byte) error {
+	if ltc.Ws == nil {
+		return errors.New(ERROR_LIVETIMING_MESSAGE_BAD_SOCKET)
+	}
+
+	if err := ltc.Ws.WriteMessage(messageType, b); err != nil {
+		return errors.New(ERROR_LIVETIMING_MESSAGE_WRITE)
+	}
+
+	return nil
+}
+
 func (ltc *LiveTimingClient) Connect() error {
 	// -- NEGOTIATE ---
 	err := ltc.negotiate()
@@ -256,21 +276,57 @@ func (ltc *LiveTimingClient) Connect() error {
 		return nil
 	}
 
-	// -- DIAL WITH CREDS ---
-	ws, _, err := websocket.DefaultDialer.Dial(
-		LIVETIMING_WS_URL+ltc.NegotiatedTokens.ConnectionToken,
-		nil,
-	)
-	if err != nil {
-		return errors.New(ERROR_LIVETIMING_CONNECTION_DIAL)
+	// The messages can be quite big due to zipped telemetry being sent, 4MiB *should* suffice
+	d := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 45 * time.Second,
+		ReadBufferSize:   4 << 20,
 	}
-	ltc.Ws = ws
 
-	fmt.Printf("%s: Connected.\n", LIVETIMING_LOG_PREFIX)
+	const (
+		maxRetries     = 3
+		initialBackoff = 1 * time.Second
+	)
+
+	// Eventually refactor out this goto, i don't like them generally but I'd rather make quick forward progress.
+connect:
+	backoff := initialBackoff
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if ltc.Ws != nil {
+			ltc.Close()
+		}
+
+		// -- DIAL WITH CREDS ---
+		ws, _, err := d.Dial(
+			LIVETIMING_WS_URL+ltc.NegotiatedTokens.ConnectionToken,
+			nil,
+		)
+		if err == nil {
+			ltc.Ws = ws
+			fmt.Printf("%s: Connected.\n", LIVETIMING_LOG_PREFIX)
+			break
+		}
+
+		if attempt == maxRetries {
+			return errors.New(ERROR_LIVETIMING_CONNECTION_DIAL)
+		}
+
+		fmt.Printf(
+			"%s: Dial failed (attempt %d/%d): %v. Retrying in %v...\n",
+			LIVETIMING_LOG_PREFIX,
+			attempt,
+			maxRetries,
+			err,
+			backoff,
+		)
+
+		time.Sleep(backoff)
+		backoff *= 4
+	}
 
 	// --- HANDSHAKE ---
 	handshake := `{"protocol":"json","version":1}` + SIGNALR_SEPERATOR
-	err = ws.WriteMessage(
+	err = ltc.Write(
 		websocket.TextMessage,
 		[]byte(handshake),
 	)
@@ -278,7 +334,7 @@ func (ltc *LiveTimingClient) Connect() error {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, msg, err := ws.ReadMessage()
+	_, msg, err := ltc.Ws.ReadMessage()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -299,7 +355,7 @@ func (ltc *LiveTimingClient) Connect() error {
 
 	b, _ := json.Marshal(sub)
 
-	err = ws.WriteMessage(
+	err = ltc.Write(
 		websocket.TextMessage,
 		append(b, SIGNALR_SEPERATOR...),
 	)
@@ -319,7 +375,7 @@ func (ltc *LiveTimingClient) Connect() error {
 	defer debugWriter.Close()
 	DEBUG_MESSAGE_COUNT := 0
 	for ltc.Stopped != true {
-		_, data, err := ws.ReadMessage()
+		_, data, err := ltc.Ws.ReadMessage()
 
 		if err != nil {
 			return errors.New(ERROR_LIVETIMING_MESSAGE_READ)
@@ -340,11 +396,20 @@ func (ltc *LiveTimingClient) Connect() error {
 			// write the first 50 messages for debug purposes
 			if DEBUG_MESSAGE_COUNT <= 500 {
 				err = debugWriter.Write(messageBytes)
-				fmt.Printf("ERROR: %s\n", err)
+				if err != nil {
+					fmt.Printf("ERROR: %s\n", err)
+				}
 			}
 
 			fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, message)
-			ltc.handleMessage(message)
+			err := ltc.handleMessage(message)
+			if err != nil {
+				if err.Error() == ERROR_LIVETIMING_CONNECTION_CLOSED {
+					goto connect
+				} else {
+					fmt.Printf("%s: HANDLE_MESSAGE_ERROR=%v\n", LIVETIMING_LOG_PREFIX, err)
+				}
+			}
 		}
 	}
 
