@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ const (
 
 	ERROR_LIVETIMING_DEBUG_FILE_OPEN        = "Error opening debug log file"
 	ERROR_LIVETIMING_DEBUG_FILE_WRITE       = "Error writing to debug log file"
+	ERROR_LIVETIMING_DEBUG_FILE_READ        = "Error failed to read debug file"
 	ERROR_LIVETIMING_DEBUG_MESSAGE_MARSHALL = "Error marshalling debug message"
 
 	ERROR_LIVETIMING_TARGET_NOT_FOUND = "Error finding provided target in targets"
@@ -53,7 +55,7 @@ const (
 
 // --- Debug Consts ---
 const (
-	DEBUG_LOG_NAME = "F1TV_LTS_DBG_DUMP.json"
+	DEBUG_LOG_NAME = "F1TV_LTS_DBG_RAW.json"
 )
 
 var LIVETIMING_TOPICS = []string{
@@ -89,7 +91,8 @@ func (m SignalRMessage) String() string {
 }
 
 type LiveTimingDebugWriter struct {
-	file *os.File
+	file    *os.File
+	scanner *bufio.Scanner
 }
 
 func (ltdw *LiveTimingDebugWriter) OpenFile() error {
@@ -103,19 +106,58 @@ func (ltdw *LiveTimingDebugWriter) OpenFile() error {
 	return nil
 }
 
-func (ltdw *LiveTimingDebugWriter) Write(message []byte) error {
+func (ltdw *LiveTimingDebugWriter) OpenReadFile() error {
+	file, err := os.Open(DEBUG_LOG_NAME)
+	if err != nil {
+		return errors.New(ERROR_LIVETIMING_DEBUG_FILE_OPEN)
+	}
+
+	ltdw.file = file
+	ltdw.scanner = bufio.NewScanner(file)
+
+	// Optional: increase scanner buffer if websocket messages can exceed 64KB.
+	buf := make([]byte, 0, 64*1024)
+	ltdw.scanner.Buffer(buf, 4<<20)
+
+	return nil
+}
+
+func (ltdw *LiveTimingDebugWriter) Read() ([]byte, error) {
+	if ltdw.file == nil || ltdw.scanner == nil {
+		return nil, errors.New(ERROR_LIVETIMING_DEBUG_FILE_OPEN)
+	}
+
+	if ltdw.scanner.Scan() {
+		// Make a copy because Scanner.Bytes() is reused.
+		line := append([]byte(nil), ltdw.scanner.Bytes()...)
+		return line, nil
+	}
+
+	if err := ltdw.scanner.Err(); err != nil {
+		fmt.Printf("%s: ERROR: %s", LIVETIMING_LOG_PREFIX, err)
+		return nil, errors.New(ERROR_LIVETIMING_DEBUG_FILE_READ)
+	}
+
+	return nil, io.EOF
+}
+
+func (ltdw *LiveTimingDebugWriter) Write(message []byte, pretty bool) error {
 	if ltdw.file == nil {
 		return errors.New(ERROR_LIVETIMING_DEBUG_FILE_OPEN)
 	}
 
-	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, message, "", "  "); err != nil {
-		return errors.New(ERROR_LIVETIMING_DEBUG_MESSAGE_MARSHALL)
+	var prettyBuff bytes.Buffer
+	if pretty {
+		if err := json.Indent(&prettyBuff, message, "", "  "); err != nil {
+			return errors.New(ERROR_LIVETIMING_DEBUG_MESSAGE_MARSHALL)
+		}
+	} else {
+		prettyBuff.Write(message)
 	}
 
-	pretty.WriteByte('\n')
+	prettyBuff.WriteByte('\n')
 
-	if _, err := ltdw.file.Write(pretty.Bytes()); err != nil {
+	if _, err := ltdw.file.Write(prettyBuff.Bytes()); err != nil {
 		return errors.New(ERROR_LIVETIMING_DEBUG_FILE_WRITE)
 	}
 
@@ -207,10 +249,11 @@ func (ltc *LiveTimingClient) handleMessage(message SignalRMessage) error {
 		}
 	case SIGNARLR_MSG_CLOSE:
 		{
-			if message.Error == "" {
+			if message.Error != "" {
 				return fmt.Errorf("%s: %s", ERROR_LIVETIMING_CONNECTION_CLOSED, message.Error)
 			} else {
-				return errors.New(ERROR_LIVETIMING_CONNECTION_CLOSED)
+				ltc.Stopped = true
+				return nil
 			}
 		}
 	case SIGNARLR_MSG_INVOCATION:
@@ -266,6 +309,48 @@ func (ltc *LiveTimingClient) Write(messageType int, b []byte) error {
 		return errors.New(ERROR_LIVETIMING_MESSAGE_WRITE)
 	}
 
+	return nil
+}
+
+func (ltc *LiveTimingClient) parseRawMessage(data []byte) error {
+	separatedMessagesSlice := bytes.SplitSeq(data, []byte(SIGNALR_SEPERATOR))
+	for messageBytes := range separatedMessagesSlice {
+		if len(messageBytes) == 0 {
+			continue
+		}
+		var message SignalRMessage
+		if err := json.Unmarshal(messageBytes, &message); err != nil {
+			fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, messageBytes)
+			continue
+		}
+
+		fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, message)
+		return ltc.handleMessage(message)
+	}
+	return nil
+}
+
+func (ltc *LiveTimingClient) Replay() error {
+	reader := NewLiveTimingDebugWriter()
+
+	if err := reader.OpenReadFile(); err != nil {
+		log.Fatal(err)
+	}
+	defer reader.Close()
+
+	for {
+		data, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = ltc.parseRawMessage(data)
+		if err != nil {
+			fmt.Printf("%s: ERROR: %s\n", LIVETIMING_LOG_PREFIX, err)
+		}
+	}
 	return nil
 }
 
@@ -373,44 +458,22 @@ connect:
 	}
 
 	defer debugWriter.Close()
-	DEBUG_MESSAGE_COUNT := 0
 	for ltc.Stopped != true {
 		_, data, err := ltc.Ws.ReadMessage()
-
 		if err != nil {
 			return errors.New(ERROR_LIVETIMING_MESSAGE_READ)
 		}
 
-		separatedMessagesSlice := bytes.SplitSeq(data, []byte(SIGNALR_SEPERATOR))
-		for messageBytes := range separatedMessagesSlice {
-			DEBUG_MESSAGE_COUNT++
-			if len(messageBytes) == 0 {
-				continue
-			}
-			var message SignalRMessage
-			if err := json.Unmarshal(messageBytes, &message); err != nil {
-				fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, messageBytes)
-				continue
-			}
+		err = ltc.parseRawMessage(data)
 
-			// write the first 50 messages for debug purposes
-			if DEBUG_MESSAGE_COUNT <= 500 {
-				err = debugWriter.Write(messageBytes)
-				if err != nil {
-					fmt.Printf("ERROR: %s\n", err)
-				}
-			}
-
-			fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, message)
-			err := ltc.handleMessage(message)
-			if err != nil {
-				if err.Error() == ERROR_LIVETIMING_CONNECTION_CLOSED {
-					goto connect
-				} else {
-					fmt.Printf("%s: HANDLE_MESSAGE_ERROR=%v\n", LIVETIMING_LOG_PREFIX, err)
-				}
+		if err != nil {
+			if err.Error() == ERROR_LIVETIMING_CONNECTION_CLOSED {
+				goto connect
+			} else {
+				fmt.Printf("%s: HANDLE_MESSAGE_ERROR=%v\n", LIVETIMING_LOG_PREFIX, err)
 			}
 		}
+
 	}
 
 	return nil
@@ -422,7 +485,7 @@ func NewLiveTimingClient() *LiveTimingClient {
 
 func main() {
 	client := NewLiveTimingClient()
-	err := client.Connect()
+	err := client.Replay()
 	if err != nil {
 		log.Fatal(err)
 	}
