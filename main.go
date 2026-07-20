@@ -108,6 +108,9 @@ type TimingAppDataStint struct {
 	TyresNotChanged string `json:"TyresNotChanged,omitempty"`
 	TotalLaps       int    `json:"TotalLaps,omitempty"`
 	StartLaps       int    `json:"StartLaps,omitempty"`
+
+	LapTime   string `json:"LapTime,omitempty"`
+	LapNumber int    `json:"LapNumber,omitempty"`
 }
 
 type TimingAppDataLine struct {
@@ -138,7 +141,8 @@ type TimingDataSectors struct {
 	PersonalFastest bool   `json:"PersonalFastest"`
 	// Don't really care about segments for now because I don't even know what they're used for.
 	// During a whole race session they were empty essentially.
-	Segments map[string]string `json:"Segments"`
+	Segments      map[string]string `json:"Segments"`
+	PreviousValue string            `json:"PreviousValue,omitempty"`
 }
 
 type TimingDataSpeeds struct {
@@ -181,6 +185,37 @@ type TimingData struct {
 	Withheld bool                      `json:"Withheld"`
 }
 
+// --- Timing Stats ---
+
+type TimingStatsPersonalBestLapTime struct {
+	Value    string `json:"Value"`
+	Lap      int    `json:"Lap"`
+	Position int    `json:"Position"`
+}
+
+type TimingStatsBestSectors struct {
+	Value    string `json:"Value"`
+	Position int    `json:"Position"`
+}
+
+type TimingStatsBestSpeed struct {
+	Value    string `json:"Value"`
+	Position int    `json:"Position"`
+}
+
+type TimingStatsLine struct {
+	Line                int                             `json:"Line"`
+	RacingNumber        string                          `json:"RacingNumber"`
+	PersonalBestLapTime TimingStatsPersonalBestLapTime  `json:"PersonalBestLapTime"`
+	BestSectors         []TimingStatsBestSectors        `json:"BestSectors"`
+	BestSpeeds          map[string]TimingStatsBestSpeed `json:"BestSpeeds"`
+}
+
+type TimingStats struct {
+	Withheld bool                       `json:"Withheld"`
+	Lines    map[string]TimingStatsLine `json:"Lines"`
+}
+
 // --- Driver List ---
 
 type Driver struct {
@@ -200,15 +235,21 @@ type Driver struct {
 // --- Race Control Messages ---
 
 type RaceControlMessage struct {
-	Utc      string `json:"Utc"`
-	Lap      int    `json:"Lap"`
+	Utc string `json:"Utc"`
+	Lap int    `json:"Lap"`
+	// Category = Flag, SafetyCar, Driver, Other
 	Category string `json:"Category"`
 	// If category is flag, these 2 fields should exist
 	// Flag = GREEN, YELLOW, DOUBLE YELLOW, RED, CLEAR
 	Flag string `json:"Flag,omitempty"`
-	// Scope = Track, Sector,
-	Scope  string `json:"Scope,omitempty"`
-	Sector int    `json:"Sector,omitempty"`
+	// Scope = Track, Sector, Driver, ENDING
+	Scope        string `json:"Scope,omitempty"`
+	Sector       int    `json:"Sector,omitempty"`
+	RacingNumber string `json:"RacingNumber,omitempty"`
+	// I believe Status exists if Mode is either VSC or SC, Status = ENDING, DEPLOYED, IN THIS LAP
+	Status string `json:"Status,omitempty"`
+	// Mode = VSC, SAFETY CAR
+	Mode string `json:"Mode,omitempty"`
 
 	Message string `json:"Message"`
 }
@@ -284,7 +325,7 @@ type SessionDataStatusSeries struct {
 }
 
 type SessionData struct {
-	Series []SessionDataSeries `json:"Series"`
+	Series       []SessionDataSeries       `json:"Series"`
 	StatusSeries []SessionDataStatusSeries `json:"StatusSeries"`
 }
 
