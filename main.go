@@ -242,6 +242,7 @@ type TimingStats struct {
 
 type DriverList map[string]Driver
 
+// For some reason f1 decided to embed _kf: bool into a map[driver_number]Driver
 func (dl *DriverList) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
