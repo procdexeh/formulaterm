@@ -14,7 +14,8 @@ However, AI will probably be used to generate tests/audit code to catch bugs, be
 - [ ] Extract the telemetry data, normalize track positions, add graphs for common metrics 
 - [ ] Build the ASCII Track Map
 
-## Outline
+## UI Outline
+```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
 │ F1TERM v0.8 | BEL GP | QUALI Q3 | 08:41 REM | TRACK 34.8°C | AIR 24.1°C | DRY | GREEN        │
 ├───────────────────────────────┬──────────────────────────────────────────────────────────────┤
@@ -41,3 +42,4 @@ However, AI will probably be used to generate tests/audit code to catch bugs, be
 ├───────────────────────────────┴──────────────────────────────────────────────────────────────┤
 │ COMMAND > lap NOR | sector | tyre | compare VER | race | telemetry | weather | quit          │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
+```
