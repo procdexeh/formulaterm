@@ -30,6 +30,9 @@ const (
 	ERROR_LIVETIMING_MESSAGE_BUFFER_WRITE   = "Error writing read message into buffer from livetiming service socket"
 	ERROR_LIVETIMING_MESSAGE_INVALID_TYPE   = "Error reading message type, received invalid type"
 	ERROR_LIVETIMING_MESSAGE_INVALID_TARGET = "Error reading message type, received invalid type"
+	ERROR_LIVETIMING_MESSAGE_INVALID_RESULT = "Error reading message result, expected it to be populated"
+	ERROR_LIVETIMING_MESSAGE_INVALID_TOPIC  = "Error parsing topic from message, received invalid topic"
+	ERROR_LIVETIMING_MESSAGE_TOPIC_PARSE    = "Error parsing topic"
 
 	ERROR_LIVETIMING_DEBUG_FILE_OPEN        = "Error opening debug log file"
 	ERROR_LIVETIMING_DEBUG_FILE_WRITE       = "Error writing to debug log file"
@@ -77,14 +80,33 @@ var LIVETIMING_TOPICS = []string{
 	"Position.z",
 }
 
+// Rename this stuff better
+type LiveTimingTopic int64
+
+const (
+	TimingDataTopic LiveTimingTopic = iota
+	TimingAppDataTopic
+	TimingStatsTopic
+	DriverListTopic
+	RaceControlMessagesTopic
+	TrackStatusTopic
+	WeatherDataTopic
+	LapCountTopic
+	ExtrapolatedClockTopic
+	SessionInfoTopic
+	SessionStatusTopic
+	SessionDataTopic
+	PositionZTopic
+)
+
 // --- Live Timing Messsage
 
 type LiveTimingMessage struct {
-	Type      int               `json:"type"`
-	Target    string            `json:"target,omitempty"`
-	Error     string            `json:"error,omitempty"`
-	Result    json.RawMessage   `json:"result,omitempty"`
-	Arguments []json.RawMessage `json:"arguments,omitempty"`
+	Type      int                        `json:"type"`
+	Target    string                     `json:"target,omitempty"`
+	Error     string                     `json:"error,omitempty"`
+	Result    map[string]json.RawMessage `json:"result,omitempty"`
+	Arguments []json.RawMessage          `json:"arguments,omitempty"`
 }
 
 // --- Weather Data ---
@@ -141,8 +163,8 @@ type TimingDataSectors struct {
 	PersonalFastest bool   `json:"PersonalFastest"`
 	// Don't really care about segments for now because I don't even know what they're used for.
 	// During a whole race session they were empty essentially.
-	Segments      map[string]string `json:"Segments"`
-	PreviousValue string            `json:"PreviousValue,omitempty"`
+	// Segments      map[string]string `json:"Segments"`
+	PreviousValue string `json:"PreviousValue,omitempty"`
 }
 
 type TimingDataSpeeds struct {
@@ -174,7 +196,7 @@ type TimingDataLine struct {
 	InPit                   bool                    `json:"InPit"`
 	PitOut                  bool                    `json:"PitOut"`
 	Stopped                 bool                    `json:"Stopped"`
-	Status                  bool                    `json:"Status"`
+	Status                  int                     `json:"Status"`
 	// Sectors are going to need some custom parsing, they can either be a {} or []
 	Sectors []TimingDataSectors `json:"Sectors"`
 	Speeds  map[string]TimingDataSpeeds
@@ -218,6 +240,32 @@ type TimingStats struct {
 
 // --- Driver List ---
 
+type DriverList map[string]Driver
+
+func (dl *DriverList) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	out := make(DriverList)
+	for key, value := range raw {
+		if key == "_kf" {
+			continue
+		}
+
+		var d Driver
+		if err := json.Unmarshal(value, &d); err != nil {
+			return err
+		}
+
+		out[key] = d
+	}
+
+	*dl = out
+	return nil
+}
+
 type Driver struct {
 	RacingNumber  string `json:"RacingNumber"`
 	BroadcastName string `json:"BroadcastName"`
@@ -233,6 +281,10 @@ type Driver struct {
 }
 
 // --- Race Control Messages ---
+
+type RaceControlMessages struct {
+	Messages []RaceControlMessage `json:"Messages"`
+}
 
 type RaceControlMessage struct {
 	Utc string `json:"Utc"`
@@ -312,6 +364,13 @@ type SessionInfo struct {
 	Path      string `json:"Path"`
 }
 
+// --- Session Status
+
+type SessionStatus struct {
+	Status  string `json:"Status"`
+	Started string `json:"Started"`
+}
+
 // --- Session Data ---
 
 type SessionDataSeries struct {
@@ -329,12 +388,83 @@ type SessionData struct {
 	StatusSeries []SessionDataStatusSeries `json:"StatusSeries"`
 }
 
+// --- Track Status ---
+
 type TrackStatus struct {
 	Status  string `json:"Status"`
 	Message string `json:"Message"`
 }
 
-//
+type ParseTopicResult struct {
+	result any
+	kind   LiveTimingTopic
+}
+
+func ParseTopic(topic string, message json.RawMessage) (any, error) {
+	var (
+		out any
+		err error
+	)
+	switch topic {
+	case "TimingData":
+		parsedMessage := &TimingData{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "TimingAppData":
+		parsedMessage := &TimingAppData{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "TimingStats":
+		parsedMessage := &TimingStats{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "DriverList":
+		parsedMessage := &DriverList{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "RaceControlMessages":
+		parsedMessage := &RaceControlMessages{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "TrackStatus":
+		parsedMessage := &TrackStatus{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "WeatherData":
+		parsedMessage := &WeatherData{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "LapCount":
+		parsedMessage := &LapCount{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "ExtrapolatedClock":
+		parsedMessage := &ExtrapolatedClock{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "SessionInfo":
+		parsedMessage := &SessionInfo{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "SessionStatus":
+		parsedMessage := &SessionStatus{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	case "SessionData":
+		parsedMessage := &SessionData{}
+		err = json.Unmarshal(message, parsedMessage)
+		out = parsedMessage
+	// case "Position.z":
+	default:
+		return nil, fmt.Errorf("%s: '%s'", ERROR_LIVETIMING_MESSAGE_INVALID_TOPIC, topic)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ERROR_LIVETIMING_MESSAGE_INVALID_TOPIC, err)
+	}
+
+	return out, nil
+}
 
 func (m LiveTimingMessage) String() string {
 	b, err := json.MarshalIndent(m, "", "  ")
@@ -493,22 +623,23 @@ func (ltc *LiveTimingClient) negotiate() error {
 }
 
 func (ltc *LiveTimingClient) handleMessage(message LiveTimingMessage) error {
-
 	switch message.Type {
-	case SIGNARLR_MSG_PING:
+	case SIGNARLR_MSG_COMPLETION:
 		{
-			ltc.Write(1, fmt.Appendf(nil, `{"type": %v}`, SIGNARLR_MSG_PING))
-			fmt.Printf("%s: RESPONDED TO PING MESSAGE WITH '%v'\n", LIVETIMING_LOG_PREFIX, SIGNARLR_MSG_PING)
-			return nil
-		}
-	case SIGNARLR_MSG_CLOSE:
-		{
-			if message.Error != "" {
-				return fmt.Errorf("%s: %s", ERROR_LIVETIMING_CONNECTION_CLOSED, message.Error)
-			} else {
-				ltc.Stopped = true
-				return nil
+			if len(message.Result) == 0 {
+				// TODO: fix this error.
+				return errors.New(ERROR_LIVETIMING_MESSAGE_INVALID_RESULT)
 			}
+
+			for key, value := range message.Result {
+				data, err := ParseTopic(key, value)
+				if err != nil {
+					fmt.Printf("%s: ERROR=%s\n", LIVETIMING_LOG_PREFIX, err)
+				}
+				fmt.Printf("%s: PARSED_TOPIC=%s VALUE=%v\n", LIVETIMING_LOG_PREFIX, key, data)
+			}
+
+			return nil
 		}
 	case SIGNARLR_MSG_INVOCATION:
 		{
@@ -542,6 +673,21 @@ func (ltc *LiveTimingClient) handleMessage(message LiveTimingMessage) error {
 
 			return nil
 		}
+	case SIGNARLR_MSG_PING:
+		{
+			ltc.Write(1, fmt.Appendf(nil, `{"type": %v}`, SIGNARLR_MSG_PING))
+			fmt.Printf("%s: RESPONDED TO PING MESSAGE WITH '%v'\n", LIVETIMING_LOG_PREFIX, SIGNARLR_MSG_PING)
+			return nil
+		}
+	case SIGNARLR_MSG_CLOSE:
+		{
+			if message.Error != "" {
+				return fmt.Errorf("%s: %s", ERROR_LIVETIMING_CONNECTION_CLOSED, message.Error)
+			} else {
+				ltc.Stopped = true
+				return nil
+			}
+		}
 	default:
 		return errors.New(ERROR_LIVETIMING_MESSAGE_INVALID_TYPE)
 	}
@@ -572,14 +718,14 @@ func (ltc *LiveTimingClient) parseRawMessage(data []byte) error {
 		if len(messageBytes) == 0 {
 			continue
 		}
+
 		var message LiveTimingMessage
 		if err := json.Unmarshal(messageBytes, &message); err != nil {
 			fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, messageBytes)
 			continue
 		}
 
-		fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, message)
-		return ltc.handleMessage(message)
+		ltc.handleMessage(message)
 	}
 	return nil
 }
@@ -604,6 +750,7 @@ func (ltc *LiveTimingClient) Replay() error {
 		if err != nil {
 			fmt.Printf("%s: ERROR: %s\n", LIVETIMING_LOG_PREFIX, err)
 		}
+		break
 	}
 	return nil
 }
