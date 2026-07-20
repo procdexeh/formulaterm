@@ -16,6 +16,7 @@ import (
 )
 
 // --- Error Consts ---
+
 const (
 	ERROR_LIVETIMING_CONNECTION_DIAL      = "Error dialing livetiming service"
 	ERROR_LIVETIMING_CONNECTION_HANDSHAKE = "Error handshaking with livetiming service"
@@ -39,6 +40,7 @@ const (
 )
 
 // --- LTS Consts ---
+
 const (
 	LIVETIMING_LOG_PREFIX    = "[F1TV_LTS]"
 	LIVETIMING_WS_URL        = "wss://livetiming.formula1.com/signalrcore?connectionToken="
@@ -54,6 +56,7 @@ const (
 )
 
 // --- Debug Consts ---
+
 const (
 	DEBUG_LOG_NAME = "F1TV_LTS_DBG_RAW.json"
 )
@@ -74,15 +77,225 @@ var LIVETIMING_TOPICS = []string{
 	"Position.z",
 }
 
-type SignalRMessage struct {
+// --- Live Timing Messsage
+
+type LiveTimingMessage struct {
 	Type      int               `json:"type"`
 	Target    string            `json:"target,omitempty"`
 	Error     string            `json:"error,omitempty"`
+	Result    json.RawMessage   `json:"result,omitempty"`
 	Arguments []json.RawMessage `json:"arguments,omitempty"`
-	Raw       map[string]any    `json:"-"`
 }
 
-func (m SignalRMessage) String() string {
+// --- Weather Data ---
+
+type WeatherData struct {
+	AirTemp       string `json:"AirTemp"`
+	Humidity      string `json:"Humidity"`
+	Pressure      string `json:"Pressure"`
+	Rainfall      string `json:"Rainfall"`
+	TrackTemp     string `json:"TrackTemp"`
+	WindDirection string `json:"WindDirection"`
+	WindSpeed     string `json:"WindSpeed"`
+}
+
+// --- Timing App Data ---
+
+type TimingAppDataStint struct {
+	LapFlags        int    `json:"LapFlags,omitempty"`
+	Compound        string `json:"Compound,omitempty"`
+	New             bool   `json:"New,omitempty"`
+	TyresNotChanged string `json:"TyresNotChanged,omitempty"`
+	TotalLaps       int    `json:"TotalLaps,omitempty"`
+	StartLaps       int    `json:"StartLaps,omitempty"`
+}
+
+type TimingAppDataLine struct {
+	RacingNumber string               `json:"RacingNumber"`
+	Stints       []TimingAppDataStint `json:"Stint"`
+	Line         int                  `json:"Line"`
+	GridPosition string               `json:"GridPos"`
+}
+
+type TimingAppData struct {
+	Lines map[string]TimingAppDataLine `json:"Lines"`
+}
+
+// --- Timing Data ---
+// Timing Data Line Sectors are weird because they can come in as either map[string]Sector or []Sector, also in general during the live feed
+// The fields can be split into 2 messages
+
+type IntervalToPositionAhead struct {
+	Value    string `json:"Value"`
+	Catching bool   `json:"Catching"`
+}
+
+type TimingDataSectors struct {
+	Stopped         bool   `json:"Stopped"`
+	Value           string `json:"Value"`
+	Status          int    `json:"Status"`
+	OverallFastest  bool   `json:"OverallFastest"`
+	PersonalFastest bool   `json:"PersonalFastest"`
+	// Don't really care about segments for now because I don't even know what they're used for.
+	// During a whole race session they were empty essentially.
+	Segments map[string]string `json:"Segments"`
+}
+
+type TimingDataSpeeds struct {
+	Value           string `json:"Value"`
+	Status          int    `json:"Status"`
+	OverallFastest  bool   `json:"OverallFastest"`
+	PersonalFastest bool   `json:"PersonalFastest"`
+}
+
+type TimingDataBestLapTime struct {
+	Value string `json:"Value"`
+}
+
+type TimingDataLastLapTime struct {
+	Value           string `json:"Value"`
+	Status          int    `json:"Status"`
+	OverallFastest  int    `json:"OverallFastest"`
+	PersonalFastest int    `json:"PersonalFastest"`
+}
+
+type TimingDataLine struct {
+	GapToLeader             string                  `json:"GapToLeader"`
+	IntervalToPositionAhead IntervalToPositionAhead `json:"IntervalToPositionAhead"`
+	Line                    int                     `json:"Line"`
+	Position                string                  `json:"Position"`
+	ShowPosition            bool                    `json:"ShowPosition"`
+	RacingNumber            string                  `json:"RacingNumber"`
+	Retired                 bool                    `json:"Retired"`
+	InPit                   bool                    `json:"InPit"`
+	PitOut                  bool                    `json:"PitOut"`
+	Stopped                 bool                    `json:"Stopped"`
+	Status                  bool                    `json:"Status"`
+	// Sectors are going to need some custom parsing, they can either be a {} or []
+	Sectors []TimingDataSectors `json:"Sectors"`
+	Speeds  map[string]TimingDataSpeeds
+}
+
+type TimingData struct {
+	Lines    map[string]TimingDataLine `json:"Lines"`
+	Withheld bool                      `json:"Withheld"`
+}
+
+// --- Driver List ---
+
+type Driver struct {
+	RacingNumber  string `json:"RacingNumber"`
+	BroadcastName string `json:"BroadcastName"`
+	FullName      string `json:"FullName"`
+	Tla           string `json:"Tla"`
+	Line          int    `json:"Line"`
+	TeamColour    string `json:"TeamColour"`
+	FirstName     string `json:"FirstName"`
+	LastName      string `json:"LastName"`
+	Reference     string `json:"Reference"`
+	HeadshotUrl   string `json:"HeadshotUrl"`
+	PublicIdRight string `json:"PublicIdRight"`
+}
+
+// --- Race Control Messages ---
+
+type RaceControlMessage struct {
+	Utc      string `json:"Utc"`
+	Lap      int    `json:"Lap"`
+	Category string `json:"Category"`
+	// If category is flag, these 2 fields should exist
+	// Flag = GREEN, YELLOW, DOUBLE YELLOW, RED, CLEAR
+	Flag string `json:"Flag,omitempty"`
+	// Scope = Track, Sector,
+	Scope  string `json:"Scope,omitempty"`
+	Sector int    `json:"Sector,omitempty"`
+
+	Message string `json:"Message"`
+}
+
+// --- Track Status ---
+
+type LapCount struct {
+	CurrentLap int `json:"CurrentLap"`
+	TotalLaps  int `json:"TotalLaps"`
+}
+
+// --- Extrapolated Clock ---
+
+type ExtrapolatedClock struct {
+	Utc           string `json:"Utc"`
+	Remaining     string `json:"Remaining"`
+	Extrapolating bool   `json:"Extrapolating"`
+}
+
+// --- Session Info ---
+
+type SessionInfoCountry struct {
+	Key  int    `json:"Key"`
+	Code string `json:"Code"`
+	Name string `json:"Name"`
+}
+
+type SessionInfoCircuit struct {
+	Key       int    `json:"Key"`
+	ShortName string `json:"ShortName"`
+}
+
+type SessionInfoMeeting struct {
+	Key          int                `json:"Key"`
+	Name         string             `json:"Name"`
+	OfficialName string             `json:"OfficialName"`
+	Location     string             `json:"Location"`
+	Number       int                `json:"Number"`
+	Country      SessionInfoCountry `json:"Country"`
+	Circuit      SessionInfoCircuit `json:"Circuit"`
+}
+
+type SessionInfoArchiveStatus struct {
+	// STATUS = GENERATING, ???
+	Status string `json:"Status"`
+}
+
+type SessionInfo struct {
+	Meeting SessionInfoMeeting `json:"Meeting"`
+	// SessionStatus = INACTIVE, ACTIVE, ???
+	SessionStatus string                   `json:"SessionStatus"`
+	ArchiveStatus SessionInfoArchiveStatus `json:"ArchiveStatus"`
+	Key           int                      `json:"Key"`
+	// TYPE = RACE, QUALI, SPRINT, SPRINT QUALI, FP1, FP2, FP3,
+	Type      string `json:"Type"`
+	Name      string `json:"Name"`
+	StartDate string `json:"StartDate"`
+	EndDate   string `json:"EndDate"`
+	GmtOffset string `json:"GmtOffset"`
+	Path      string `json:"Path"`
+}
+
+// --- Session Data ---
+
+type SessionDataSeries struct {
+	Utc string `json:"Utc"`
+	Lap int    `json:"Lap"`
+}
+
+type SessionDataStatusSeries struct {
+	Utc         string `json:"Utc"`
+	TrackStatus string `json:"TrackStatus"`
+}
+
+type SessionData struct {
+	Series []SessionDataSeries `json:"Series"`
+	StatusSeries []SessionDataStatusSeries `json:"StatusSeries"`
+}
+
+type TrackStatus struct {
+	Status  string `json:"Status"`
+	Message string `json:"Message"`
+}
+
+//
+
+func (m LiveTimingMessage) String() string {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err.Error()
@@ -238,7 +451,7 @@ func (ltc *LiveTimingClient) negotiate() error {
 	return nil
 }
 
-func (ltc *LiveTimingClient) handleMessage(message SignalRMessage) error {
+func (ltc *LiveTimingClient) handleMessage(message LiveTimingMessage) error {
 
 	switch message.Type {
 	case SIGNARLR_MSG_PING:
@@ -318,7 +531,7 @@ func (ltc *LiveTimingClient) parseRawMessage(data []byte) error {
 		if len(messageBytes) == 0 {
 			continue
 		}
-		var message SignalRMessage
+		var message LiveTimingMessage
 		if err := json.Unmarshal(messageBytes, &message); err != nil {
 			fmt.Printf("%s: MESSAGE=%v\n", LIVETIMING_LOG_PREFIX, messageBytes)
 			continue
