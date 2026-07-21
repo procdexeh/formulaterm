@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -185,6 +186,37 @@ type TimingDataLastLapTime struct {
 	PersonalFastest int    `json:"PersonalFastest"`
 }
 
+type TimingDataSectorsMap map[string]TimingDataSectors
+func (s *TimingDataSectorsMap) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+
+	if bytes.Equal(data, []byte("null")) {
+		*s = nil
+		return nil
+	}
+
+	switch data[0] {
+	case '[':
+		var sectors []TimingDataSectors
+		if err := json.Unmarshal(data, &sectors); err != nil {
+			return err
+		}
+
+		*s = make(TimingDataSectorsMap, len(sectors))
+		for i, sector := range sectors {
+			(*s)[strconv.Itoa(i)] = sector
+		}
+
+		return nil
+
+	case '{':
+		return json.Unmarshal(data, (*map[string]TimingDataSectors)(s))
+
+	default:
+		return fmt.Errorf("unexpected Sectors format: %s", data)
+	}
+}
+
 type TimingDataLine struct {
 	GapToLeader             string                  `json:"GapToLeader"`
 	IntervalToPositionAhead IntervalToPositionAhead `json:"IntervalToPositionAhead"`
@@ -197,8 +229,9 @@ type TimingDataLine struct {
 	PitOut                  bool                    `json:"PitOut"`
 	Stopped                 bool                    `json:"Stopped"`
 	Status                  int                     `json:"Status"`
+
 	// Sectors are going to need some custom parsing, they can either be a {} or []
-	Sectors []TimingDataSectors `json:"Sectors"`
+	Sectors TimingDataSectorsMap `json:"Sectors"`
 	Speeds  map[string]TimingDataSpeeds
 }
 
@@ -500,7 +533,6 @@ func (ltdw *LiveTimingDebugWriter) OpenReadFile() error {
 	ltdw.file = file
 	ltdw.scanner = bufio.NewScanner(file)
 
-	// Optional: increase scanner buffer if websocket messages can exceed 64KB.
 	buf := make([]byte, 0, 64*1024)
 	ltdw.scanner.Buffer(buf, 4<<20)
 
@@ -513,7 +545,6 @@ func (ltdw *LiveTimingDebugWriter) Read() ([]byte, error) {
 	}
 
 	if ltdw.scanner.Scan() {
-		// Make a copy because Scanner.Bytes() is reused.
 		line := append([]byte(nil), ltdw.scanner.Bytes()...)
 		return line, nil
 	}
@@ -648,16 +679,11 @@ func (ltc *LiveTimingClient) handleMessage(message LiveTimingMessage) error {
 				return errors.New(ERROR_LIVETIMING_MESSAGE_INVALID_TARGET)
 			}
 
-			_, err := ltc.FindTarget(message.Target)
-			if err != nil {
-				ltc.AddTarget(message.Target)
-			}
-
 			if message.Target == "feed" {
 				if message.Arguments == nil {
-
 					return errors.New(ERROR_LIVETIMING_MESSAGE_INVALID_TARGET)
 				}
+
 				topicPreview := string(message.Arguments[0])
 				if len(topicPreview) > 80 {
 					topicPreview = topicPreview[:80]
