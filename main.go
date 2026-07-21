@@ -122,25 +122,103 @@ type WeatherData struct {
 	WindSpeed     string `json:"WindSpeed"`
 }
 
+// IndexMap accepts JSON arrays (snapshots) or objects (sparse feed deltas).
+// Arrays are normalized to string keys "0", "1", ...
+type IndexMap[T any] map[string]T
+
+func (m *IndexMap[T]) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+
+	if bytes.Equal(data, []byte("null")) {
+		*m = nil
+		return nil
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("unexpected empty JSON value")
+	}
+
+	switch data[0] {
+	case '[':
+		var list []T
+		if err := json.Unmarshal(data, &list); err != nil {
+			return err
+		}
+		out := make(IndexMap[T], len(list))
+		for i, v := range list {
+			out[strconv.Itoa(i)] = v
+		}
+		*m = out
+		return nil
+	case '{':
+		var obj map[string]T
+		if err := json.Unmarshal(data, &obj); err != nil {
+			return err
+		}
+		*m = IndexMap[T](obj)
+		return nil
+	default:
+		return fmt.Errorf("unexpected JSON format: %s", data)
+	}
+}
+
+// FlexBool accepts JSON bool or string forms ("true"/"false") used by F1 feeds.
+type FlexBool bool
+
+func (b *FlexBool) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	switch {
+	case bytes.Equal(data, []byte("null")):
+		*b = false
+		return nil
+	case bytes.Equal(data, []byte("true")), bytes.Equal(data, []byte(`"true"`)), bytes.Equal(data, []byte(`"True"`)):
+		*b = true
+		return nil
+	case bytes.Equal(data, []byte("false")), bytes.Equal(data, []byte(`"false"`)), bytes.Equal(data, []byte(`"False"`)):
+		*b = false
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		switch s {
+		case "1", "true", "True":
+			*b = true
+			return nil
+		case "0", "false", "False", "":
+			*b = false
+			return nil
+		}
+	}
+
+	var v bool
+	if err := json.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("FlexBool: %s", data)
+	}
+	*b = FlexBool(v)
+	return nil
+}
+
+func (b FlexBool) Bool() bool { return bool(b) }
+
 // --- Timing App Data ---
 
 type TimingAppDataStint struct {
-	LapFlags        int    `json:"LapFlags,omitempty"`
-	Compound        string `json:"Compound,omitempty"`
-	New             bool   `json:"New,omitempty"`
-	TyresNotChanged string `json:"TyresNotChanged,omitempty"`
-	TotalLaps       int    `json:"TotalLaps,omitempty"`
-	StartLaps       int    `json:"StartLaps,omitempty"`
+	LapFlags        int      `json:"LapFlags,omitempty"`
+	Compound        string   `json:"Compound,omitempty"`
+	New             FlexBool `json:"New,omitempty"`
+	TyresNotChanged string   `json:"TyresNotChanged,omitempty"`
+	TotalLaps       int      `json:"TotalLaps,omitempty"`
+	StartLaps       int      `json:"StartLaps,omitempty"`
 
 	LapTime   string `json:"LapTime,omitempty"`
 	LapNumber int    `json:"LapNumber,omitempty"`
 }
 
 type TimingAppDataLine struct {
-	RacingNumber string               `json:"RacingNumber"`
-	Stints       []TimingAppDataStint `json:"Stint"`
-	Line         int                  `json:"Line"`
-	GridPosition string               `json:"GridPos"`
+	RacingNumber string                         `json:"RacingNumber"`
+	Stints       IndexMap[TimingAppDataStint]   `json:"Stints"`
+	Line         int                            `json:"Line"`
+	GridPosition string                         `json:"GridPos"`
 }
 
 type TimingAppData struct {
@@ -148,8 +226,8 @@ type TimingAppData struct {
 }
 
 // --- Timing Data ---
-// Timing Data Line Sectors are weird because they can come in as either map[string]Sector or []Sector, also in general during the live feed
-// The fields can be split into 2 messages
+// Live feed fields are often split across messages (partial updates).
+// Sectors arrive as [] in snapshots and {} in deltas.
 
 type IntervalToPositionAhead struct {
 	Value    string `json:"Value"`
@@ -177,45 +255,17 @@ type TimingDataSpeeds struct {
 
 type TimingDataBestLapTime struct {
 	Value string `json:"Value"`
+	Lap   int    `json:"Lap,omitempty"`
 }
 
 type TimingDataLastLapTime struct {
 	Value           string `json:"Value"`
 	Status          int    `json:"Status"`
-	OverallFastest  int    `json:"OverallFastest"`
-	PersonalFastest int    `json:"PersonalFastest"`
+	OverallFastest  bool   `json:"OverallFastest"`
+	PersonalFastest bool   `json:"PersonalFastest"`
 }
 
-type TimingDataSectorsMap map[string]TimingDataSectors
-func (s *TimingDataSectorsMap) UnmarshalJSON(data []byte) error {
-	data = bytes.TrimSpace(data)
-
-	if bytes.Equal(data, []byte("null")) {
-		*s = nil
-		return nil
-	}
-
-	switch data[0] {
-	case '[':
-		var sectors []TimingDataSectors
-		if err := json.Unmarshal(data, &sectors); err != nil {
-			return err
-		}
-
-		*s = make(TimingDataSectorsMap, len(sectors))
-		for i, sector := range sectors {
-			(*s)[strconv.Itoa(i)] = sector
-		}
-
-		return nil
-
-	case '{':
-		return json.Unmarshal(data, (*map[string]TimingDataSectors)(s))
-
-	default:
-		return fmt.Errorf("unexpected Sectors format: %s", data)
-	}
-}
+type TimingDataSectorsMap = IndexMap[TimingDataSectors]
 
 type TimingDataLine struct {
 	GapToLeader             string                  `json:"GapToLeader"`
@@ -229,10 +279,12 @@ type TimingDataLine struct {
 	PitOut                  bool                    `json:"PitOut"`
 	Stopped                 bool                    `json:"Stopped"`
 	Status                  int                     `json:"Status"`
-
-	// Sectors are going to need some custom parsing, they can either be a {} or []
-	Sectors TimingDataSectorsMap `json:"Sectors"`
-	Speeds  map[string]TimingDataSpeeds
+	NumberOfLaps            int                     `json:"NumberOfLaps"`
+	NumberOfPitStops        int                     `json:"NumberOfPitStops"`
+	BestLapTime             TimingDataBestLapTime   `json:"BestLapTime"`
+	LastLapTime             TimingDataLastLapTime   `json:"LastLapTime"`
+	Sectors                 TimingDataSectorsMap    `json:"Sectors"`
+	Speeds                  map[string]TimingDataSpeeds `json:"Speeds"`
 }
 
 type TimingData struct {
@@ -262,7 +314,7 @@ type TimingStatsLine struct {
 	Line                int                             `json:"Line"`
 	RacingNumber        string                          `json:"RacingNumber"`
 	PersonalBestLapTime TimingStatsPersonalBestLapTime  `json:"PersonalBestLapTime"`
-	BestSectors         []TimingStatsBestSectors        `json:"BestSectors"`
+	BestSectors         IndexMap[TimingStatsBestSectors] `json:"BestSectors"`
 	BestSpeeds          map[string]TimingStatsBestSpeed `json:"BestSpeeds"`
 }
 
@@ -306,6 +358,7 @@ type Driver struct {
 	FullName      string `json:"FullName"`
 	Tla           string `json:"Tla"`
 	Line          int    `json:"Line"`
+	TeamName      string `json:"TeamName"`
 	TeamColour    string `json:"TeamColour"`
 	FirstName     string `json:"FirstName"`
 	LastName      string `json:"LastName"`
@@ -317,7 +370,7 @@ type Driver struct {
 // --- Race Control Messages ---
 
 type RaceControlMessages struct {
-	Messages []RaceControlMessage `json:"Messages"`
+	Messages IndexMap[RaceControlMessage] `json:"Messages"`
 }
 
 type RaceControlMessage struct {
@@ -413,13 +466,14 @@ type SessionDataSeries struct {
 }
 
 type SessionDataStatusSeries struct {
-	Utc         string `json:"Utc"`
-	TrackStatus string `json:"TrackStatus"`
+	Utc           string `json:"Utc"`
+	TrackStatus   string `json:"TrackStatus,omitempty"`
+	SessionStatus string `json:"SessionStatus,omitempty"`
 }
 
 type SessionData struct {
-	Series       []SessionDataSeries       `json:"Series"`
-	StatusSeries []SessionDataStatusSeries `json:"StatusSeries"`
+	Series       IndexMap[SessionDataSeries]       `json:"Series"`
+	StatusSeries IndexMap[SessionDataStatusSeries] `json:"StatusSeries"`
 }
 
 // --- Track Status ---
