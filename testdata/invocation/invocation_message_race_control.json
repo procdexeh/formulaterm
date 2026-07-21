@@ -1,0 +1,3 @@
+{"type":1,"target":"feed","arguments":["RaceControlMessages",{"Messages":{"49":{"Utc":"2026-07-19T13:03:52","Lap":1,"Category":"Flag","Flag":"GREEN","Scope":"Track","Message":"GREEN LIGHT - PIT EXIT OPEN"}}},"2026-07-19T13:03:52.198Z"]}
+{"type":1,"target":"feed","arguments":["RaceControlMessages",{"Messages":{"50":{"Utc":"2026-07-19T13:04:35","Lap":1,"Category":"Flag","Flag":"DOUBLE YELLOW","Scope":"Sector","Sector":7,"Message":"DOUBLE YELLOW IN TRACK SECTOR 7"}}},"2026-07-19T13:04:35.086Z"]}
+{"type":1,"target":"feed","arguments":["RaceControlMessages",{"Messages":{"54":{"Utc":"2026-07-19T13:05:25","Lap":1,"Category":"SafetyCar","Status":"DEPLOYED","Mode":"SAFETY CAR","Message":"SAFETY CAR DEPLOYED"}}},"2026-07-19T13:05:24.953Z"]}
