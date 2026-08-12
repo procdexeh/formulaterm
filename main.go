@@ -79,6 +79,7 @@ var LIVETIMING_TOPICS = []string{
 	"SessionStatus",
 	"SessionData",
 	"Position.z",
+	"CarData.z",
 }
 
 // Rename this stuff better
@@ -215,10 +216,10 @@ type TimingAppDataStint struct {
 }
 
 type TimingAppDataLine struct {
-	RacingNumber string                         `json:"RacingNumber"`
-	Stints       IndexMap[TimingAppDataStint]   `json:"Stints"`
-	Line         int                            `json:"Line"`
-	GridPosition string                         `json:"GridPos"`
+	RacingNumber string                       `json:"RacingNumber"`
+	Stints       IndexMap[TimingAppDataStint] `json:"Stints"`
+	Line         int                          `json:"Line"`
+	GridPosition string                       `json:"GridPos"`
 }
 
 type TimingAppData struct {
@@ -268,22 +269,22 @@ type TimingDataLastLapTime struct {
 type TimingDataSectorsMap = IndexMap[TimingDataSectors]
 
 type TimingDataLine struct {
-	GapToLeader             string                  `json:"GapToLeader"`
-	IntervalToPositionAhead IntervalToPositionAhead `json:"IntervalToPositionAhead"`
-	Line                    int                     `json:"Line"`
-	Position                string                  `json:"Position"`
-	ShowPosition            bool                    `json:"ShowPosition"`
-	RacingNumber            string                  `json:"RacingNumber"`
-	Retired                 bool                    `json:"Retired"`
-	InPit                   bool                    `json:"InPit"`
-	PitOut                  bool                    `json:"PitOut"`
-	Stopped                 bool                    `json:"Stopped"`
-	Status                  int                     `json:"Status"`
-	NumberOfLaps            int                     `json:"NumberOfLaps"`
-	NumberOfPitStops        int                     `json:"NumberOfPitStops"`
-	BestLapTime             TimingDataBestLapTime   `json:"BestLapTime"`
-	LastLapTime             TimingDataLastLapTime   `json:"LastLapTime"`
-	Sectors                 TimingDataSectorsMap    `json:"Sectors"`
+	GapToLeader             string                      `json:"GapToLeader"`
+	IntervalToPositionAhead IntervalToPositionAhead     `json:"IntervalToPositionAhead"`
+	Line                    int                         `json:"Line"`
+	Position                string                      `json:"Position"`
+	ShowPosition            bool                        `json:"ShowPosition"`
+	RacingNumber            string                      `json:"RacingNumber"`
+	Retired                 bool                        `json:"Retired"`
+	InPit                   bool                        `json:"InPit"`
+	PitOut                  bool                        `json:"PitOut"`
+	Stopped                 bool                        `json:"Stopped"`
+	Status                  int                         `json:"Status"`
+	NumberOfLaps            int                         `json:"NumberOfLaps"`
+	NumberOfPitStops        int                         `json:"NumberOfPitStops"`
+	BestLapTime             TimingDataBestLapTime       `json:"BestLapTime"`
+	LastLapTime             TimingDataLastLapTime       `json:"LastLapTime"`
+	Sectors                 TimingDataSectorsMap        `json:"Sectors"`
 	Speeds                  map[string]TimingDataSpeeds `json:"Speeds"`
 }
 
@@ -311,11 +312,11 @@ type TimingStatsBestSpeed struct {
 }
 
 type TimingStatsLine struct {
-	Line                int                             `json:"Line"`
-	RacingNumber        string                          `json:"RacingNumber"`
-	PersonalBestLapTime TimingStatsPersonalBestLapTime  `json:"PersonalBestLapTime"`
+	Line                int                              `json:"Line"`
+	RacingNumber        string                           `json:"RacingNumber"`
+	PersonalBestLapTime TimingStatsPersonalBestLapTime   `json:"PersonalBestLapTime"`
 	BestSectors         IndexMap[TimingStatsBestSectors] `json:"BestSectors"`
-	BestSpeeds          map[string]TimingStatsBestSpeed `json:"BestSpeeds"`
+	BestSpeeds          map[string]TimingStatsBestSpeed  `json:"BestSpeeds"`
 }
 
 type TimingStats struct {
@@ -862,10 +863,10 @@ connect:
 		if ltc.Ws != nil {
 			ltc.Close()
 		}
-
+		
 		// -- DIAL WITH CREDS ---
 		ws, _, err := d.Dial(
-			LIVETIMING_WS_URL+ltc.NegotiatedTokens.ConnectionToken,
+			LIVETIMING_WS_URL+ltc.NegotiatedTokens.ConnectionToken+"&access_token=eyJraWQiOiIxIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYifQ.eyJFeHRlcm5hbEF1dGhvcml6YXRpb25zQ29udGV4dERhdGEiOiJDQU4iLCJTdWJzY3JpcHRpb25TdGF0dXMiOiJhY3RpdmUiLCJTdWJzY3JpYmVySWQiOiIxODIyNzA0MTIiLCJGaXJzdE5hbWUiOiJKZWFuLVNlYmFzdGllbiIsImVudHMiOlt7ImNvdW50cnkiOiJDQU4iLCJlbnQiOiJSRUcifSx7ImNvdW50cnkiOiJDQU4iLCJlbnQiOiJQUk8ifV0sIkxhc3ROYW1lIjoiR2lyb3V4IiwiZXhwIjoxNzg1MjM4MTYwLCJTZXNzaW9uSWQiOiJleUpoYkdjaU9pSm9kSFJ3T2k4dmQzZDNMbmN6TG05eVp5OHlNREF4THpBMEwzaHRiR1J6YVdjdGJXOXlaU05vYldGakxYTm9ZVEkxTmlJc0luUjVjQ0k2SWtwWFZDSjkuZXlKaWRTSTZJakV3TURFeElpd2ljMmtpT2lJMk1HRTVZV1E0TkMxbE9UTmtMVFE0TUdZdE9EQmtOaTFoWmpNM05EazBaakpsTWpJaUxDSm9kSFJ3T2k4dmMyTm9aVzFoY3k1NGJXeHpiMkZ3TG05eVp5OTNjeTh5TURBMUx6QTFMMmxrWlc1MGFYUjVMMk5zWVdsdGN5OXVZVzFsYVdSbGJuUnBabWxsY2lJNklqRTRNakkzTURReE1pSXNJbWxrSWpvaVlUUmhZV05rWmpFdE5tRTJZeTAwTkRJekxXRXlZVEV0WVdOak0ySm1aRGswTnprMUlpd2lkQ0k2SWpFaUxDSnNJam9pWlc0dFIwSWlMQ0prWXlJNklqTTJORFFpTENKaFpXUWlPaUl5TURJMkxUQTRMVEEzVkRFeE9qSTVPakl3TGpRM05Gb2lMQ0prZENJNklqRWlMQ0psWkNJNklqSXdNall0TURndE1qTlVNVEU2TWprNk1qQXVORGMwV2lJc0ltTmxaQ0k2SWpJd01qWXRNRGN0TWpWVU1URTZNams2TWpBdU5EYzBXaUlzSW1sd0lqb2lNbUV3TURveFpXSTRPbU13TlRrNllqZG1Oem8zWlRnek9qbG1Oelk2T1RBM09Eb3lZVGxpSWl3aVl5STZJa1JQVFVWSlMwRldRU0lzSW5OMElqb2lTMVVpTENKd1l5STZJalUwTXpRd0lpd2lZMjhpT2lKTVZGVWlMQ0p1WW1ZaU9qRTNPRFE0T1RJMU5qQXNJbVY0Y0NJNk1UYzROelE0TkRVMk1Dd2lhWE56SWpvaVlYTmpaVzVrYjI0dWRIWWlMQ0poZFdRaU9pSmhjMk5sYm1SdmJpNTBkaUo5LkZ5WGx2U0NfeEwxb3ptQkpPdGYtNy0tTmlIbWtoVzdjRlFxa2xCM1VPM00iLCJpYXQiOjE3ODQ4OTI1NjAsIlN1YnNjcmliZWRQcm9kdWN0IjoiRjEgVFYgUHJvIEFubnVhbCIsImp0aSI6IjdkODcxYTgwLTFmZTEtNGM0Zi1iMzVjLTk5ZDdiZjJmZTJlNyIsImhhc2hlZFN1YnNjcmliZXJJZCI6IkdIVGZuenVYSUpadnhQSHZsOXlBNEF6RVFoR2NtYVZmVnB3cExDRnZ1eHM9In0.Rd4PjCEVQvp1JpOS1KmEfe7vy5fa_eoyr0LzUP9len0Wjoyn7DC_5AGB35sQ5BAuIo8L-9sceQFO5tKPhQBrHZnKQzn26RWkqo3xcU9aLa_5M5KDKaX24Xlfsx5jLRqzcgR-wHp_aOLSFXxlUY-htFynYFGfw2SBYo5iCucX-AabNXxDioS0BRXcYziPJvPAcBDI4zLNAR2VUgYi8qAxhBIzmDJUyJuCtM5uez4MzqCbTYLIFRu5AU6nxiTgGUOAyUE3RUDNWnQMTJRnIu655kOpOslN3cU0rPbXOjwaTB_cxsaV-s70viFm8gQPAFLSV9kVFW3vUXkk0OuV3QbHng",
 			nil,
 		)
 		if err == nil {
@@ -946,8 +947,12 @@ connect:
 			return errors.New(ERROR_LIVETIMING_MESSAGE_READ)
 		}
 
-		err = ltc.parseRawMessage(data)
+		err = debugWriter.Write(data, false)
+		if err != nil {
+			fmt.Printf("%s: DEBUG_WRITE_ERROR=%v\n", LIVETIMING_LOG_PREFIX, err)
+		}
 
+		err = ltc.parseRawMessage(data)
 		if err != nil {
 			if err.Error() == ERROR_LIVETIMING_CONNECTION_CLOSED {
 				goto connect
@@ -967,7 +972,7 @@ func NewLiveTimingClient() *LiveTimingClient {
 
 func main() {
 	client := NewLiveTimingClient()
-	err := client.Replay()
+	err := client.Connect()
 	if err != nil {
 		log.Fatal(err)
 	}
